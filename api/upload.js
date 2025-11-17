@@ -1,6 +1,16 @@
-import cloudinary from "cloudinary";
 import nodemailer from "nodemailer";
+import cloudinary from "cloudinary";
 
+// Allow big base64 images
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "10mb",
+    },
+  },
+};
+
+// Cloudinary setup
 cloudinary.v2.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -8,7 +18,7 @@ cloudinary.v2.config({
 });
 
 export default async function handler(req, res) {
-  // CORS FIX FOR NETLIFY + ANY FRONTEND
+  // CORS FIX (Netlify + All domains)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -17,21 +27,25 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
+  if (req.method !== "POST") {
+    return res.status(405).json({ msg: "Only POST allowed" });
+  }
+
   try {
     const { image } = req.body;
 
     if (!image) {
-      return res.status(400).json({ error: "No image provided" });
+      return res.status(400).json({ error: "No image received" });
     }
 
     // Upload to Cloudinary
-    const uploadRes = await cloudinary.v2.uploader.upload(image, {
+    const uploadResponse = await cloudinary.v2.uploader.upload(image, {
       folder: "user_photos",
     });
 
-    const photoURL = uploadRes.secure_url;
+    const photoURL = uploadResponse.secure_url;
 
-    // Email Setup
+    // Nodemailer (Gmail)
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -40,45 +54,26 @@ export default async function handler(req, res) {
       },
     });
 
-    // SEND HTML EMAIL WITH BUTTON
+    // Email (same as your old version)
     await transporter.sendMail({
       from: process.env.GMAIL_USER,
       to: process.env.GMAIL_USER,
       subject: "New Photo Uploaded ✔",
       html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
-          <h2 style="color: #222;">New Photo Uploaded</h2>
-          <p style="font-size: 15px; color: #444;">Your new photo is ready.</p>
-
-          <a href="${photoURL}"
-             style="
-               display: inline-block;
-               background: #007bff;
-               color: #fff;
-               padding: 12px 20px;
-               text-decoration: none;
-               border-radius: 8px;
-               font-size: 16px;
-               margin-top: 10px;
-             ">
-            View Uploaded Photo
-          </a>
-
-          <br><br>
-
-          <img src="${photoURL}" 
-               alt="Photo Preview" 
-               style="width: 220px; border-radius: 10px; margin-top: 15px;">
-        </div>
+        <h2>New Photo Uploaded</h2>
+        <p>Click the link below to view your image:</p>
+        <a href="${photoURL}" target="_blank" 
+           style="font-size: 16px; padding: 8px 14px; background: #007bff; 
+           color: white; border-radius: 6px; text-decoration: none;">
+          View Uploaded Photo
+        </a>
       `,
     });
 
     return res.status(200).json({
       success: true,
       url: photoURL,
-      message: "Photo uploaded and email sent",
     });
-
   } catch (err) {
     console.error("UPLOAD ERROR:", err);
     return res.status(500).json({ error: err.message });
